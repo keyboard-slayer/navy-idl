@@ -15,6 +15,7 @@ class VfsFlags:
 class VfsNode:
     name: str 
     size: size
+    type: VfsFlags
 
 
 @endpoint
