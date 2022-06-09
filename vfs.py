@@ -1,8 +1,7 @@
 from navy import *
 
-
-@enum
-class FsFlags:
+@enum 
+class VfsFlags:
     DIR = auto()
     FILE = auto()
     CHAR = auto()
@@ -12,16 +11,12 @@ class FsFlags:
     MOUNTPOINT = auto()
 
 
-@struct
-class FsNode:
-    name: str
-    flags: FsFlags
-    perm: u32
+@struct 
+class VfsNode:
+    name: str 
     size: size
 
 
 @endpoint
-class Vfs:
-    # def resolve_path(path: str) -> FsNode: pass
-    def test(node: FsNode) -> str:
-        pass
+class Inode:
+    def open(path: str) -> VfsNode: pass

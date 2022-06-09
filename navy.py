@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 
 import ast
+import re
 from dataclasses import dataclass
 from os.path import basename
-from inspect import getsource, cleandoc, getfile, getmodule
+from inspect import getsource, getfile, getmodule
 from hashlib import md5
 from types import ModuleType
-from typing import TypeVar, Annotated
+from typing import TypeVar
 
 u32 = TypeVar("u32")
 i32 = TypeVar("i32")
 size = TypeVar("size")
 T = TypeVar("T")
 struct = dataclass
+interfaces = []
 struct_defined = []
 enums = {}
 
@@ -21,11 +23,6 @@ enums = {}
 def auto():
     pass
 
-
-class Ptr:
-    def __init__(self, container):
-        self.container = container
-        self.__name__ = "Ptr"
 
 def to_ctype(name: str, header: set, module: ModuleType, code: list):
     typename = ""
@@ -64,7 +61,7 @@ def to_ctype(name: str, header: set, module: ModuleType, code: list):
             elif name in enums.keys():
                 typename = f"enum {typename.lower()}"
                 code.append(enums[name])
-            
+
             else:
                 raise NameError(f"name '{name}' is not defined")
 
@@ -73,18 +70,24 @@ def to_ctype(name: str, header: set, module: ModuleType, code: list):
 
 class CGen(ast.NodeTransformer):
     def __init__(self, endpoint_name: str, module_name: str, module: ModuleType):
+        self.vtable = []
+        self.endpoint_name = ""
         self.headers = set(["navy/ipcpack.h"])
         self.name = module_name.capitalize()
         self.endpoint = endpoint_name
         self.module = module
         self.source_code = [
-            f"#define {module_name.upper()}_ID 0x{md5(module_name.encode()).hexdigest()[17:]}\n",
+            f"\n#define {module_name.upper()}_ID 0x{md5(module_name.encode()).hexdigest()[17:]}\n",
         ]
 
     def visit_FunctionDef(self, node):
-        struct_name = f"{self.name}{self.endpoint}{node.name.capitalize()}Request"
+        arg_lst = []
+
+        self.endpoint_name = node.name.capitalize()
+        struct_name = f"{self.name}{self.endpoint}{self.endpoint_name}Request"
         struct = "typedef struct \n{\n"
         for arg in node.args.args:
+            arg_lst += f"{to_ctype(arg.annotation.id, self.headers, self.module, self.source_code)}"
             struct += f"    {to_ctype(arg.annotation.id, self.headers, self.module, self.source_code)} {arg.arg};\n"
         struct += f"}} {struct_name};\n"
 
@@ -93,26 +96,35 @@ class CGen(ast.NodeTransformer):
             f"void ipc_pack_{self.name.lower()}_{self.endpoint.lower()}_request(IpcPack *self, {struct_name} *data);"
         )
         self.source_code.append(
-            f"void ipc_unpack_{self.name.lower()}_{self.endpoint.lower()}_request(IpcPack *self, {struct_name} *data);"
+            f"void ipc_unpack_{self.name.lower()}_{self.endpoint.lower()}_request(IpcPack *self, {struct_name} *data);\n"
+        )
+
+        self.vtable.append(f"{self.name}{self.endpoint}{self.endpoint_name}")
+        self.source_code.append(
+            f"typedef void {self.vtable[-1]}(void *self, {struct_name} const *req, {to_ctype(node.returns.id, self.headers, self.module, self.source_code)} *resp);\n"
         )
 
 
 def endpoint(self):
     methods = list(filter(lambda att: not att.startswith("__"), dir(self)))
-    funcs = []
-
+    module_name = basename(getfile(self)).split(".")[0]
     for method in methods:
         func = getsource(getattr(self, method)).strip()
         compiler = CGen(
-            self.__name__, basename(getfile(self)).split(".")[0], getmodule(self)
+            self.__name__, module_name, getmodule(self)
         )
         compiler.visit(ast.parse(func))
 
-        print("#pragma once\n")
-        for header in compiler.headers:
-            print(f"#include <{header}>")
-        print("")
-        print("\n".join(compiler.source_code))
+        with open(f"{basename(getfile(self)).split('.')[0]}.h", "w") as f:
+            f.write("#pragma once\n\n")
+            for header in compiler.headers:
+                f.write(f"#include <{header}>\n")
+
+            f.write("\n".join(compiler.source_code))
+            f.write("\ntypedef struct\n{\n")
+            for vtable in compiler.vtable:
+                f.write(f"    {vtable} *{re.sub(r'(?<!^)(?=[A-Z])', '_', vtable).lower()};\n")
+            f.write(f"}} {self.__name__.capitalize()}{module_name.capitalize()}{compiler.endpoint_name}Vtable;\n")
 
 
 def enum(self):
